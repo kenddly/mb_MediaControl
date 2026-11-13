@@ -73,7 +73,7 @@ namespace MusicBeePlugin
         {
             UnsubscribeGlobalHooks();
             SetArtworkThumbnail(null);
-            timer.Dispose();
+            timer?.Dispose();
         }
 
         // uninstall this plugin - clean up any persisted files
@@ -166,7 +166,15 @@ namespace MusicBeePlugin
             switch (type)
             {
                 case NotificationType.PluginStartup:
-                    systemMediaControls = BackgroundMediaPlayer.Current.SystemMediaTransportControls;
+                    var player = BackgroundMediaPlayer.Current;
+                    // This MediaPlayer never has media of its own. While its CommandManager is enabled it
+                    // auto-handles Play/Pause button presses and pushes its own (empty) state into the SMTC,
+                    // fighting the PlaybackStatus we set by hand below. That can knock MusicBee's session out
+                    // of "current session" so Windows hands the media key to another app. Manual SMTC
+                    // control requires switching the automatic integration off.
+                    player.CommandManager.IsEnabled = false;
+                    systemMediaControls = player.SystemMediaTransportControls;
+                    timer = new System.Threading.Timer(SetPositionState, null, Timeout.Infinite, Timeout.Infinite);
                     systemMediaControls.PlaybackStatus = MediaPlaybackStatus.Closed;
                     systemMediaControls.IsEnabled = true;
                     systemMediaControls.IsPlayEnabled = true;
@@ -189,8 +197,10 @@ namespace MusicBeePlugin
                     SetRepeatState();
                     break;
                 case NotificationType.PlayStateChanged:
-                    if (!trackChangeListenerDisabled)
-                        SetPlayerState();
+                    // Not gated on trackChangeListenerDisabled: if this notification lands while a button
+                    // handler is running it must not be dropped, or the SMTC can be left reporting the
+                    // opposite of MusicBee's real state. Re-applying the same status is harmless.
+                    SetPlayerState();
                     break;
                 case NotificationType.TrackChanged:
                     if (!trackChangeListenerDisabled)
@@ -304,15 +314,15 @@ namespace MusicBeePlugin
             {
                 case PlayState.Playing:
                     systemMediaControls.PlaybackStatus = MediaPlaybackStatus.Playing;
-                    timer = new System.Threading.Timer(SetPositionState, null, 0, 1000);
+                    timer?.Change(0, 1000);
                     break;
                 case PlayState.Paused:
                     systemMediaControls.PlaybackStatus = MediaPlaybackStatus.Paused;
-                    timer.Dispose();
+                    timer?.Change(Timeout.Infinite, Timeout.Infinite);
                     break;
                 case PlayState.Stopped:
                     systemMediaControls.PlaybackStatus = MediaPlaybackStatus.Stopped;
-                    timer.Dispose();
+                    timer?.Change(Timeout.Infinite, Timeout.Infinite);
                     break;
             }
         }
